@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "RT-TBCluster: real-time tracking of tuberculosis transmission clusters"
+abstract: >-
+  RT-TBCluster follows Oxford Nanopore sequencing runs of Mycobacterium
+  tuberculosis in real time.
+authors:
+  - family-names: "Buenestado-Serrano"
+    given-names: "Sergio"
+    orcid: "https://orcid.org/0000-0003-1739-4459"
+    affiliation: "Instituto de Investigación Sanitaria Gregorio Marañón"
+keywords:
+  - tuberculosis
+  - Mycobacterium tuberculosis
+  - Oxford Nanopore
+  - real-time sequencing
+  - transmission clusters
+  - genomic surveillance
+  - bioinformatics
+version: "1.0.1"
+date-released: "2026-10-15"
+license: GPL-3.0
+repository-code: "https://github.com/MG-IiSGM/RT-TBCluster"
