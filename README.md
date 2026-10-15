@@ -1,5 +1,7 @@
 # RT-TBCluster: real-time tracking of tuberculosis transmission clusters
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23393285.svg)](https://doi.org/10.5281/zenodo.23393285)
+
 **RT-TBCluster** follows a _Mycobacterium tuberculosis_ sequencing run **while it is still running** and tells you, sample by sample, whether each new case belongs to a known transmission cluster. It works with Oxford Nanopore sequencers, and it produces simple web pages (HTML reports) that update by themselves every minute.
 
 > **In one sentence:** you start the sequencer, you start RT-TBCluster, and within minutes you can already see which samples are linked to known outbreaks, instead of waiting until the run has finished.
@@ -145,10 +147,10 @@ Here, positions 1234 and 5678 are marker SNPs of cluster **15**, and position 90
 RT-TBCluster is a Python script that uses several well-known bioinformatics programs. The easiest way to install them is with [conda](https://docs.conda.io/):
 
 ```bash
-conda create -n tbrt python=3.8 pandas minimap2 ngmlr samtools bcftools freebayes snippy
-conda activate tbrt
 git clone https://github.com/MG-IiSGM/RT-TBCluster.git
 cd RT-TBCluster
+conda env create -f environment.yml -y
+conda activate rt-tbcluster
 ```
 
 Programs used:
@@ -322,9 +324,9 @@ The number after the sample name (`-141`) is **how many FASTQ files** had been a
 
 ## 15. Citation
 
-If you use RT-TBCluster in your work, please cite:
+> Buenestado-Serrano S. RT-TBCluster: real-time tracking of tuberculosis transmission clusters. Zenodo. 2026. https://doi.org/10.5281/zenodo.23393285
 
-> [Authors]. [Title of the article]. [Journal], [Year]. [DOI]
+GitHub also offers a ready-made citation through the "Cite this repository" button, generated from the `CITATION.cff` file.
 
 ## 16. License
 
