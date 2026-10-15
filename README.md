@@ -60,31 +60,11 @@ When no new data has arrived for one hour, it understands that the run has finis
 
 This is the full path of the data, from the run folder to the reports. The cycle repeats until the run ends.
 
-```mermaid
-flowchart TD
-    A[/"Nanopore run folder<br>(only read, never modified)"/] --> C
-    B[/"Table: barcode and sample name (.tsv)"/] --> C
-    R[/"Reference genome (.fasta)"/] --> E
-    K[/"Cluster catalogue (.tsv)<br>Marker and Branch SNPs"/] --> I
+<p align="center">
+  <img src="docs/images/workflow.svg" width="100%" alt="TB-RT workflow: inputs feed an eight-step real-time loop (detect, map, merge, call, filter, compare, coverage, report) that repeats until one hour passes without new files">
+</p>
 
-    subgraph LOOP ["Real-time loop: repeats while the run is going"]
-        C["1. DETECT<br>new FASTQ files in fastq_pass/barcodeXX"] --> D{"New files?"}
-        D -- yes --> E["2. MAP only the new reads<br>minimap2 or NGMLR"]
-        E --> F["3. MERGE with the cumulative BAM of the sample<br>samtools merge"]
-        F --> G["4. CALL variants<br>FreeBayes"]
-        G --> H["5. FILTER and format<br>BCFtools and Snippy"]
-        H --> I["6. COMPARE with the cluster catalogue<br>SNPs with frequency at least 80% and depth above 10x"]
-        I --> J["7. CHECK coverage of every cluster position<br>samtools depth"]
-        J --> L["8. WRITE reports<br>Summary.html and one HTML per sample"]
-        L --> M{"More than 1 hour without new files?"}
-        D -- no --> M
-        M -- no --> N["Wait and repeat"]
-        N --> C
-    end
-
-    M -- yes --> S(["END of the analysis"])
-    L -.-> O[/"Results folder<br>reports, BAM files, variants, state.json"/]
-```
+<p align="center"><em>In the animated diagram, the white dots travel around the loop and each step lights up when it is its turn.</em></p>
 
 The important point is step 2: **only the new reads are aligned** and then added to the ones already analysed. The whole run is never re-aligned from scratch, which keeps every cycle fast.
 
@@ -237,16 +217,9 @@ To follow the results, open `Results/reports/Summary.html` in any web browser. I
 
 A SNP counts as **called** only if it passes both requirements: **allele frequency of at least 80%** and **depth above 10 reads**. Then, for each cluster, the rule is:
 
-```mermaid
-flowchart LR
-    A["SNPs called in the sample"] --> B{"How many marker SNPs<br>does the cluster have?"}
-    B -- "10 or fewer" --> C["All of them must be called"]
-    B -- "More than 10" --> D["At least 10 must be called"]
-    C --> E{"Rule met?"}
-    D --> E
-    E -- yes --> F["Sample assigned to the cluster<br>(branch SNPs are then reported)"]
-    E -- no --> G["Unassigned"]
-```
+<p align="center">
+  <img src="docs/images/assignment_rule.svg" width="100%" alt="Assignment rule: with 10 or fewer marker SNPs all must be called, with more than 10 at least 10 must be called; if the rule is met the sample is assigned, otherwise unassigned">
+</p>
 
 Two examples:
 
@@ -276,7 +249,7 @@ The page refreshes every minute, so you can leave it open during the whole run. 
 
 At the top, you find the sample name and, below it, the candidate cluster. Then there is one card per cluster, with two bars:
 
-- **Marker SNPs** (teal bar): _"27 total marker SNPs: 24 called of 27 covered"_.
+- **Marker SNPs** (teal bar): _"27 total marker SNPs: 24 markers called of 27 covered"_.
 - **Branch marker SNPs** (orange bar): the same, for the branch SNPs.
 
 How to read each line:
