@@ -42,6 +42,7 @@ END_FORMATTING = '\033[0m'
 BOLD = '\033[1m'
 RED = '\033[31m'
 GREEN = '\033[32m'
+YELLOW = '\033[33m'
 DIM = "\033[2m"
 
 
@@ -438,15 +439,45 @@ def score(variants, clusters):
 	return res
 
 
-def make_summary(res):
-    ok = [r for r in res if r["assigned"]]
-    if ok:
-        return ", ".join("Cluster {} ({}/{} markers, {}/{} branch markers)".format(
-            r["cluster"], r["X"], r["Y"], r["x"], r["Z"]) for r in ok)
-    return "Unassigned"
+def status(e):
+	"""Cluster / Suboptimal / Unassigned (result and row colour).
+	A sample that meets the cluster rule is always 'Cluster', whatever its sequencing quality (see quality_label).
+	Without cluster: Suboptimal = less than --min_genome_frac of the genome has a depth > --annot_min_dp; otherwise Unassigned"""
+	if e["assigned"]:
+		return "Cluster"
+	qc = e.get("qc")
+	return "Suboptimal" if qc and not qc["good"] else "Unassigned"
+
+
+def make_summary(e):
+	if status(e) == "Cluster":
+		return ", ".join("Cluster {} ({}/{} markers, {}/{} branch markers)".format(
+			r["cluster"], r["X"], r["Y"], r["x"], r["Z"]) for r in e["res"] if r["assigned"])
+	return status(e)
+
+
+def cov_text(qc):
+	"""e.g. '100x, 90.3% > 10x'"""
+	if not qc:
+		return "n/a"
+	m = qc["mean"]
+	return "{}, {:.1f}% > {}x".format(("{:.1f}x" if m < 10 else "{:.0f}x").format(m), 100 * qc["frac"], qc["dp"])
 
 
 ### Analysis ###
+
+def genome_quality(bam, args):
+	"""Mean depth and fraction of the WHOLE reference with depth > --annot_min_dp
+	(positions with zero depth are included, so the denominator is the genome size)"""
+	cmd = ("set -o pipefail; samtools depth -aa -q {} -Q {} {} | "
+		"awk -v t={} '{{s+=$3; if ($3>t) c++; n++}} END{{if (n) printf \"%.4f %.6f\", s/n, c/n}}'").format(
+		args.min_quality, args.min_mapping, bam, args.annot_min_dp)
+	r = subprocess.run(cmd, shell=True, executable="/bin/bash", capture_output=True, text=True)
+	if r.returncode != 0 or not r.stdout.strip():
+		raise RuntimeError("Genome coverage could not be calculated: " + r.stderr.strip())
+	mean, frac = (float(x) for x in r.stdout.split())
+	return dict(mean=mean, frac=frac, dp=args.annot_min_dp, thr=args.min_genome_frac, good=frac >= args.min_genome_frac)
+
 
 def coverage(bam, clusters, assigned, wd, args):
 	"""Positions of each assigned cluster with a depth > threshold, read from the BAM file"""
@@ -505,6 +536,8 @@ def analyse(sample, new, prev, args, clusters):
 			os.replace(nfq, fq)
 		shutil.rmtree(bat, ignore_errors=True)
 
+	qc = genome_quality(bam, args)
+
 	os.makedirs(os.path.join(wd, "variants"), exist_ok=True)
 
 	if not os.path.isfile(p("snps.raw.vcf")):
@@ -537,8 +570,9 @@ def analyse(sample, new, prev, args, clusters):
 			r["Cb"] = cov[r["cluster"]].get("Branch", 0)
 			r["mindp"] = args.annot_min_dp
 
-	summary = make_summary(res)
-	return dict(n=n, time=datetime.datetime.now().strftime("%H:%M:%S"), res=res, assigned=assigned, summary=summary, bam=bam, fq=fq)
+	entry = dict(n=n, time=datetime.datetime.now().strftime("%H:%M:%S"), res=res, assigned=assigned, qc=qc, bam=bam, fq=fq)
+	entry["summary"] = make_summary(entry)
+	return entry
 
 
 
@@ -566,7 +600,14 @@ table{width:100%;border-collapse:collapse;background:var(--card);border:1px soli
 th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line);font-size:.95rem}
 th{color:var(--mute);font-weight:600}a{color:var(--marker)}
 tr.ok td{background:#DDF3E4}
-tr.no td{background:#F8DEDC}
+tr.un td{background:#FFF4C9}
+tr.subopt td{background:#F8DEDC}
+.pill{display:inline-block;padding:2px 12px;border-radius:999px;font-weight:600;font-size:.9rem}
+.pill.ok{background:#DDF3E4;color:#14532D}.pill.un{background:#FFF4C9;color:#7A5B00}.pill.subopt{background:#F8DEDC;color:#8E1B14}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;color:var(--mute);font-size:.85rem;margin:0 0 20px}
+.qg span{background:var(--ok)}.qb span{background:#D9534F}
+.card.q-good{border-left:6px solid var(--ok)}.card.q-bad{border-left:6px solid #D9534F}
+.badge.bad{color:#B3261E}
 @media (max-width:520px){main{padding:20px 14px}}
 """
 
@@ -610,46 +651,80 @@ def card(r):
 			).format(esc(r["cluster"]), badge, cov_html(r))
 
 
+def quality_html(qc):
+	"""Card with the mean coverage and the fraction of the genome above the depth threshold"""
+	if not qc:
+		return ""
+	good = qc["good"]
+	return ('<section class="card {}"><header><h3>Sequencing quality</h3><span class="badge {}">{}</span></header>'
+			'<div class="row"><p>Mean coverage: <b>{}</b></p></div>'
+			'<div class="row"><p><b>{:.1f}%</b> of the genome above <b>{}x</b></p>{}'
+			'<div class="hint">The vertical mark indicates the minimum for Good quality ({:.0f}%)</div></div></section>'
+			).format("q-good" if good else "q-bad", "" if good else "bad", "Good quality" if good else "Suboptimal",
+					("{:.1f}x" if qc["mean"] < 10 else "{:.0f}x").format(qc["mean"]),
+					100 * qc["frac"], qc["dp"], bar(100 * qc["frac"], 100, "qg" if good else "qb", 100 * qc["thr"]),
+					100 * qc["thr"])
+
+
 def sample_page(sample, entry, history):
-	res = entry["res"]
-	assigned = [r for r in res if r["assigned"]]
-	partial = [r for r in res if not r["assigned"] and (r["X"] or r["x"])]
-	if assigned:
-		# head = '{}<br><span class="sub">Cluster {} candidate</span>'.format(esc(sample), esc(", ".join(entry["assigned"])))
-		# lead = " ".join("{} SNPs of {} markers, and {} SNPs of {} branch markers".format(r["X"], r["Y"], r["x"], r["Z"]) for r in assigned)
-		head = '{}'.format(esc(sample))
-		lead = 'Cluster {} candidate'.format(esc(", ".join(entry["assigned"])))
+	label, qc = status(entry), entry.get("qc")
+	assigned = [r for r in entry["res"] if r["assigned"]] if label == "Cluster" else []
+	if label == "Cluster":
+		lead = '<span class="pill ok">Cluster {} candidate</span>'.format(esc(", ".join(entry["assigned"])))
+	elif label == "Unassigned":
+		lead = '<span class="pill un">Unassigned</span> There are no new entries into preexisting clusters'
 	else:
-		head = '{}'.format(esc(sample))
-		lead = "There are no new entries into preexisting clusters yet"
-	body = "<h1>{}</h1><p class=\"lead\">{}</p><p class=\"hint\">Analysis with {} fastq files, updated at {}.</p>".format(head, lead, entry["n"], entry["time"])
-	# body += "".join(card(r) for r in assigned + partial[:5])
-	body += "".join(card(r) for r in assigned) 
-	rows = "".join("<tr><td>{}</td><td>{}</td><td>{}</td></tr>".format(h["n"], h["time"], esc(h["summary"]))
-				   for h in reversed(history))
-	body += "<h2>Evolution during the run</h2><table><tr><th>Files</th><th>Time</th><th>Cluster candidate</th></tr>{}</table>".format(rows)
+		lead = ('<span class="pill subopt">Suboptimal</span> Not enough sequencing data'
+				'is required before assigning a cluster').format(100 * qc["thr"], qc["dp"])
+	body = "<h1>{}</h1><p class=\"lead\">{}</p><p class=\"hint\">Analysis with {} fastq files, updated at {}.</p>".format(esc(sample), lead, entry["n"], entry["time"])
+	body += (quality_html(qc) if qc and not qc["good"] else "") + "".join(card(r) for r in assigned)
+	rows = "".join("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+		h["n"], h["time"], esc(cov_text(h.get("qc"))).replace(", ", "<br>"), esc(quality_label(h)), esc(cluster_cell(h))) for h in reversed(history))
+	body += ("<h2>Evolution during the run</h2><table><tr><th>Files</th><th>Time</th><th>Coverage</th>"
+			"<th>Sequencing quality</th><th>Cluster candidate</th></tr>{}</table>").format(rows)
 	body += '<p class="hint"><a href="Summary.html">Return to the run summary</a></p>'
 	return page("Report " + sample, body)
 
 
+def quality_label(e):
+	"""Content of the 'Sequencing quality' column"""
+	qc = e.get("qc")
+	if not qc:
+		return "n/a"
+	return "Good quality" if qc["good"] else "Suboptimal"
+
+
+def cluster_cell(e):
+	"""'Cluster candidate' column (with marker detail): cluster / Unassigned / Pending while Suboptimal"""
+	label = status(e)
+	if label == "Cluster":
+		return e["summary"]
+	return "Unassigned" if label == "Unassigned" else "Pending"
+
+
 def index_result(e):
-	ok = [r for r in e["res"] if r["assigned"]]
-	if not ok:
-		return "Unassigned"
-	return ", ".join("Cluster {}".format(r["cluster"]) for r in ok)
+	"""'Cluster candidate' column of the summary (short version)"""
+	if status(e) == "Cluster":
+		return ", ".join("Cluster {}".format(r["cluster"]) for r in e["res"] if r["assigned"])
+	return cluster_cell(e)
 
 
 def index_page(state):
+	css_class = {"Suboptimal": "subopt", "Unassigned": "un", "Cluster": "ok"}
 	rows = ""
 	for s in sorted(state):
 		e = state[s]["history"][-1]
-		cls = "ok" if e["assigned"] else "no"
-		rows += '<tr class="{0}"><td><a href="{1}.html">{1}</a></td><td>{2}</td><td>{3}</td></tr>'.format(cls, esc(s), esc(index_result(e)), e["time"])
-	body = ("<h1>Run summary</h1><p class=\"lead\">{} sequences in analysis. The page refreshes automatically every minute</p>"
-			"<table><tr><th>Sequences</th><th>Cluster candidate</th><th>Time</th></tr>{}</table>").format(len(state), rows)
+		rows += '<tr class="{0}"><td><a href="{1}.html">{1}</a></td><td>{2}</td><td>{3}</td><td>{4}</td></tr>'.format(
+			css_class[status(e)], esc(s), esc(index_result(e)), esc(quality_label(e)), e["time"])
+	legend = ('<p class="legend"><span><span class="pill subopt">Suboptimal</span> low coverage and no cluster assigned</span>'
+			'<span><span class="pill un">Unassigned</span> good quality, no cluster assigned</span>'
+			'<span><span class="pill ok">Cluster</span> assigned to a cluster (check its sequencing quality)</span></p>')
+	body = ("<h1>Run summary</h1><p class=\"lead\">{} sequences in analysis. The page refreshes automatically every minute</p>{}"
+			"<table><tr><th>Sequences</th><th>Cluster candidate</th><th>Sequencing quality</th><th>Time</th></tr>{}</table>"
+			).format(len(state), legend, rows)
 	return page("Run summary", body)
- 
- 
+
+
 def write_reports(args, state):
 	rdir = os.path.join(args.output, "reports")
 	check_create_dir(rdir)
@@ -682,6 +757,7 @@ def main():
 	ap.add_argument("--annot_min_dp", type=int, default=10, help="Minimum depth to annotate (>)")
 	ap.add_argument("--min_quality", type=int, default=12)
 	ap.add_argument("--min_mapping", type=int, default=60)
+	ap.add_argument("--min_genome_frac", type=float, default=0.9, help="Fraction of the genome with depth > --annot_min_dp required for Good Quality (>=)")
 	ap.add_argument("--ploidy", type=int, default=1)
 	ap.add_argument("--poll", type=int, default=60, help="Seconds between inspections")
 	ap.add_argument("--settle", type=int, default=30, help="Seconds without modification to mark a file as closed")
@@ -704,7 +780,7 @@ def main():
 	if state:
 		for st in state.values():
 			for h in st["history"]:
-				h["summary"] = make_summary(h["res"])
+				h["summary"] = make_summary(h)
 		write_reports(args, state)
 	last_new = time.time()
  
@@ -732,8 +808,9 @@ def main():
 			state[sample] = st
 			save_state(state_file, state)
 			new_any = True
-			COLOR = GREEN + BOLD if entry["assigned"] else RED
-			logger.info("[%s] " + COLOR + "%s" + END_FORMATTING, sample, "; ".join("Cluster {} ({}/{} markers, {}/{} branch markers)".format(r["cluster"], r["X"], r["Y"], r["x"], r["Z"]) for r in entry["res"] if r["assigned"]) or entry["summary"])
+			label = status(entry)
+			color = {"Cluster": GREEN + BOLD, "Unassigned": YELLOW, "Suboptimal": RED}[label]
+			logger.info("[%s] " + color + "%s" + END_FORMATTING + DIM + "  (%s)" + END_FORMATTING, sample, entry["summary"], cov_text(entry["qc"]))
 		if new_any:
 			write_reports(args, state)
 			last_new = time.time()
