@@ -825,7 +825,7 @@ def main():
 	ap.add_argument("--annot_min_dp", type=int, default=10, help="Minimum depth to annotate (>)")
 	ap.add_argument("--min_quality", type=int, default=12)
 	ap.add_argument("--min_mapping", type=int, default=60)
-	ap.add_argument("--min_genome_frac", type=float, default=0.9, help="Fraction of the genome with depth > --annot_min_dp required for Good Quality (>=)")
+	ap.add_argument("--min_genome_frac", type=float, default=0.7, help="Fraction of the genome with depth > --annot_min_dp required for Good Quality (>=)")
 	ap.add_argument("--ploidy", type=int, default=1)
 	ap.add_argument("--poll", type=int, default=60, help="Seconds between inspections")
 	ap.add_argument("--settle", type=int, default=30, help="Seconds without modification to mark a file as closed")
