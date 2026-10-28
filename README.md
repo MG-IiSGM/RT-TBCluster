@@ -326,10 +326,6 @@ The header states **"Orphan"**. Below the sequencing quality card, a **Cluster v
 
 ![Individual report of an orphan sample](docs/images/report_unassigned_example.png)
 
-![Individual report of an pending sample](docs/images/report_unassigned_example_opt.png)
-
-![Individual report of an suboptimal sample](docs/images/report_unassigned_example_subopt.png)
-
 ### 10.4 Individual report of a pending sample
 
 The header states **"Pending"**. Below the sequencing quality card, the **Cluster verification** card says how many clusters still need more covered markers, for example _"2 of 3 clusters pending"_. Click on **"Show the clusters that are missing"** to expand a list, with the progress of each one:
@@ -343,7 +339,9 @@ The clusters closest to being completed are listed first. This tells you, for ea
 
 At the end of the run, the samples that are still pending are labelled **Suboptimal**: the data were not enough to rule out every cluster, and you may want to sequence them again.
 
-![Individual report of a pending sample](docs/images/report_pending_example.png)
+![Individual report of an pending sample](docs/images/report_unassigned_example_opt.png)
+
+![Individual report of an suboptimal sample](docs/images/report_unassigned_example_subopt.png)
 
 ## 11. What is written to disk
 
@@ -412,7 +410,7 @@ GitHub also offers a ready-made citation through the **"Cite this repository"** 
 
 ## 16. License
 
-This project is released under the **[LICENSE NAME]** license. See the [LICENSE](LICENSE) file for details.
+This project is released under the **GNU GPL 3** license. See the [LICENSE](LICENSE) file for details.
 
 ## 17. Acknowledgements
 
@@ -422,4 +420,4 @@ RT-TBCluster builds on the work of the developers of minimap2, NGMLR, SAMtools, 
 
 ---
 
-**Questions or suggestions?** Open an [issue](../../issues) in this repository or contact [name / email].
+**Questions or suggestions?** Open an [issue](../../issues) in this repository or contact [**Sergio Buenestado-Serrano** / **sergio.buenestado@gmail.com**].
