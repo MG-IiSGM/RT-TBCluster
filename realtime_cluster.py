@@ -440,13 +440,19 @@ def score(variants, clusters):
 
 
 def status(e):
-	"""Cluster / Suboptimal / Unassigned (result and row colour).
-	A sample that meets the cluster rule is always 'Cluster', whatever its sequencing quality (see quality_label).
-	Without cluster: Suboptimal = less than --min_genome_frac of the genome has a depth > --annot_min_dp; otherwise Unassigned"""
+	"""Cluster / Orphan / Pending / Suboptimal (result and row colour). The sequencing quality does not decide it.
+	Cluster:     the cluster rule is met.
+	Orphan:  no cluster and every cluster has enough covered markers to be ruled out.
+	Pending:     no cluster and at least one cluster still lacks enough covered markers (the run is still going).
+	Suboptimal:  a Pending sample that could not be resolved when the run ended (entry flagged 'final')."""
 	if e["assigned"]:
 		return "Cluster"
-	qc = e.get("qc")
-	return "Suboptimal" if qc and not qc["good"] else "Unassigned"
+	pend, qc = e.get("pending"), e.get("qc")
+	if pend == []:
+		return "Orphan"
+	if pend is None and not (qc and not qc["good"]):   # old entry without verification data and with good quality
+		return "Orphan"
+	return "Suboptimal" if e.get("final") else "Pending"
 
 
 def make_summary(e):
@@ -495,6 +501,23 @@ def coverage(bam, clusters, assigned, wd, args):
 		s = clusters[clusters["INFO"] == c]
 		out[c] = {k: sum((r, p) in ok for r, p in set(zip(g.REGION, g.POS))) for k, g in s.groupby("KIND")}
 	return out
+
+
+def pending_clusters(bam, clusters, wd, args):
+	"""Clusters whose coverage criterion is NOT met yet, with the same philosophy as the assignment:
+	at least min(10, markers) marker positions with depth > --annot_min_dp. Returns (pending list, clusters checked)"""
+	markers = clusters[clusters["KIND"] == "Marker"].groupby("INFO").size()
+	ids = sorted(markers.index)
+	cov = coverage(bam, clusters, ids, wd, args)
+	pending = []
+	for c in ids:
+		Y = int(markers[c])
+		need = min(min_markers, Y)
+		Cm = cov[c].get("Marker", 0)
+		if Cm < need:
+			pending.append(dict(cluster=c, Cm=Cm, Y=Y, need=need))
+	pending.sort(key=lambda q: q["need"] - q["Cm"])   # the closest to complete first
+	return pending, len(ids)
 
 
 def analyse(sample, new, prev, args, clusters):
@@ -570,7 +593,12 @@ def analyse(sample, new, prev, args, clusters):
 			r["Cb"] = cov[r["cluster"]].get("Branch", 0)
 			r["mindp"] = args.annot_min_dp
 
-	entry = dict(n=n, time=datetime.datetime.now().strftime("%H:%M:%S"), res=res, assigned=assigned, qc=qc, bam=bam, fq=fq)
+	pending, n_clusters = [], 0
+	if not assigned:
+		pending, n_clusters = pending_clusters(bam, clusters, wd, args)
+
+	entry = dict(n=n, time=datetime.datetime.now().strftime("%H:%M:%S"), res=res, assigned=assigned, qc=qc,
+				 pending=pending, n_clusters=n_clusters, bam=bam, fq=fq)
 	entry["summary"] = make_summary(entry)
 	return entry
 
@@ -608,6 +636,8 @@ tr.subopt td{background:#F8DEDC}
 .qg span{background:var(--ok)}.qb span{background:#D9534F}
 .card.q-good{border-left:6px solid var(--ok)}.card.q-bad{border-left:6px solid #D9534F}
 .badge.bad{color:#B3261E}
+details{margin-top:10px}summary{cursor:pointer;color:var(--marker);font-weight:600;font-size:.95rem}
+.card ul{margin:10px 0 0;padding-left:20px;font-size:.95rem}.card li{margin:2px 0}
 @media (max-width:520px){main{padding:20px 14px}}
 """
 
@@ -656,7 +686,7 @@ def quality_html(qc):
 	if not qc:
 		return ""
 	good = qc["good"]
-	return ('<section class="card {}"><header><h3>Sequencing quality</h3><span class="badge {}">{}</span></header>'
+	return ('<section class="card {}"><header><h3>Depth coverage quality</h3><span class="badge {}">{}</span></header>'
 			'<div class="row"><p>Mean coverage: <b>{}</b></p></div>'
 			'<div class="row"><p><b>{:.1f}%</b> of the genome above <b>{}x</b></p>{}'
 			'<div class="hint">The vertical mark indicates the minimum for Good quality ({:.0f}%)</div></div></section>'
@@ -666,22 +696,39 @@ def quality_html(qc):
 					100 * qc["thr"])
 
 
+def pending_html(e):
+	"""Samples without cluster: how many clusters remain to be verified, and which ones (collapsible)"""
+	qc = e.get("qc")
+	if e["assigned"] or not qc or e.get("pending") is None:
+		return ""
+	pend, total = e["pending"], e.get("n_clusters", 0)
+	if not pend:
+		return ('<section class="card q-good"><header><h3>Cluster verification</h3><span class="badge">Complete</span></header>'
+				'<div class="row"><p>All <b>{}</b> clusters have enough covered markers: the sample is reported as Orphan.</p></div></section>'
+				).format(total)
+	items = "".join("<li>Cluster {}: <b>{}</b> of <b>{}</b> markers covered ({} needed)</li>".format(
+		esc(q["cluster"]), q["Cm"], q["Y"], q["need"]) for q in pend)
+	return ('<section class="card q-bad"><header><h3>Cluster verification</h3><span class="badge bad">{0} of {1} clusters pending</span></header>'
+			'<div class="row"><p>These clusters still need more covered markers (depth &gt; {2}x) before the sample can be reported as Clustered or Orphan.</p>'
+			'<details><summary>Show the {0} clusters that are missing</summary><ul>{3}</ul></details></div></section>'
+			).format(len(pend), total, qc["dp"], items)
+
+
 def sample_page(sample, entry, history):
 	label, qc = status(entry), entry.get("qc")
 	assigned = [r for r in entry["res"] if r["assigned"]] if label == "Cluster" else []
 	if label == "Cluster":
 		lead = '<span class="pill ok">Cluster {} candidate</span>'.format(esc(", ".join(entry["assigned"])))
-	elif label == "Unassigned":
-		lead = '<span class="pill un">Unassigned</span> There are no new entries into preexisting clusters'
+	elif label == "Orphan":
+		lead = '<span class="pill un">Orphan</span> There are no new entries into preexisting clusters yet'
+	elif label == "Suboptimal":
+		lead = '<span class="pill subopt">Suboptimal</span> The run ended without enough sequencing data to rule out all the clusters'
 	else:
-		lead = ('<span class="pill subopt">Suboptimal</span> Not enough sequencing data'
-				'is required before assigning a cluster').format(100 * qc["thr"], qc["dp"])
+		lead = '<span class="pill subopt">Pending</span> Not enough sequencing data yet to rule out all the clusters'
 	body = "<h1>{}</h1><p class=\"lead\">{}</p><p class=\"hint\">Analysis with {} fastq files, updated at {}.</p>".format(esc(sample), lead, entry["n"], entry["time"])
-	body += (quality_html(qc) if qc and not qc["good"] else "") + "".join(card(r) for r in assigned)
-	rows = "".join("<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
-		h["n"], h["time"], esc(cov_text(h.get("qc"))).replace(", ", "<br>"), esc(quality_label(h)), esc(cluster_cell(h))) for h in reversed(history))
-	body += ("<h2>Evolution during the run</h2><table><tr><th>Files</th><th>Time</th><th>Coverage</th>"
-			"<th>Sequencing quality</th><th>Cluster candidate</th></tr>{}</table>").format(rows)
+	body += quality_html(qc) + pending_html(entry) + "".join(card(r) for r in assigned)
+	rows = "".join("<tr><td>{}</td><td>{}</td><td>{}</td></tr>".format(h["n"], h["time"], esc(cluster_cell(h))) for h in reversed(history))
+	body += "<h2>Evolution during the run</h2><table><tr><th>Files</th><th>Time</th><th>Cluster candidate</th></tr>{}</table>".format(rows)
 	body += '<p class="hint"><a href="Summary.html">Return to the run summary</a></p>'
 	return page("Report " + sample, body)
 
@@ -695,11 +742,11 @@ def quality_label(e):
 
 
 def cluster_cell(e):
-	"""'Cluster candidate' column (with marker detail): cluster / Unassigned / Pending while Suboptimal"""
+	"""'Cluster candidate' column (with marker detail): cluster / Orphan / Pending while Suboptimal"""
 	label = status(e)
 	if label == "Cluster":
 		return e["summary"]
-	return "Unassigned" if label == "Unassigned" else "Pending"
+	return label if label in ("Orphan", "Suboptimal") else "Pending"
 
 
 def index_result(e):
@@ -710,17 +757,21 @@ def index_result(e):
 
 
 def index_page(state):
-	css_class = {"Suboptimal": "subopt", "Unassigned": "un", "Cluster": "ok"}
+	css_class = {"Pending": "subopt", "Suboptimal": "subopt", "Orphan": "un", "Cluster": "ok"}
 	rows = ""
 	for s in sorted(state):
 		e = state[s]["history"][-1]
-		rows += '<tr class="{0}"><td><a href="{1}.html">{1}</a></td><td>{2}</td><td>{3}</td><td>{4}</td></tr>'.format(
-			css_class[status(e)], esc(s), esc(index_result(e)), esc(quality_label(e)), e["time"])
-	legend = ('<p class="legend"><span><span class="pill subopt">Suboptimal</span> low coverage and no cluster assigned</span>'
-			'<span><span class="pill un">Unassigned</span> good quality, no cluster assigned</span>'
-			'<span><span class="pill ok">Cluster</span> assigned to a cluster (check its sequencing quality)</span></p>')
+		rows += '<tr class="{0}"><td><a href="{1}.html">{1}</a></td><td>{2}</td><td>{3}</td></tr>'.format(
+			css_class[status(e)], esc(s), esc(index_result(e)), e["time"])
+	labels = {status(state[s]["history"][-1]) for s in state}
+	red = ('<span><span class="pill subopt">Suboptimal</span> the run ended without enough data to rule out all the clusters</span>'
+		if "Suboptimal" in labels else
+		'<span><span class="pill subopt">Pending</span> some clusters cannot be ruled out yet (not enough covered markers)</span>')
+	legend = ('<p class="legend">' + red +
+			'<span><span class="pill un">Orphan</span> unassigned to a preexisting cluster</span>'
+			'<span><span class="pill ok">Cluster</span> assigned to a cluster</span></p>')
 	body = ("<h1>Run summary</h1><p class=\"lead\">{} sequences in analysis. The page refreshes automatically every minute</p>{}"
-			"<table><tr><th>Sequences</th><th>Cluster candidate</th><th>Sequencing quality</th><th>Time</th></tr>{}</table>"
+			"<table><tr><th>Sequences</th><th>Cluster candidate</th><th>Time</th></tr>{}</table>"
 			).format(len(state), legend, rows)
 	return page("Run summary", body)
 
@@ -741,6 +792,23 @@ def save_state(path, state):
 		json.dump(state, f)
 	os.replace(tmp, path)
 
+
+
+def finalize(args, state, state_file):
+	"""End of the run: the samples that are still Pending are closed as Suboptimal (final report)"""
+	for s in sorted(state):
+		last = state[s]["history"][-1]
+		if status(last) == "Pending":
+			last["final"] = True
+			logger.info("[%s] " + RED + "Suboptimal" + END_FORMATTING + DIM +
+						"  (the run ended before all the clusters could be verified)" + END_FORMATTING, s)
+	save_state(state_file, state)
+	write_reports(args, state)
+	counts = {}
+	for st in state.values():
+		label = status(st["history"][-1])
+		counts[label] = counts.get(label, 0) + 1
+	logger.info("Final result: %s", ", ".join("{} {}".format(v, k) for k, v in sorted(counts.items())))
 
 
 def main():
@@ -809,13 +877,14 @@ def main():
 			save_state(state_file, state)
 			new_any = True
 			label = status(entry)
-			color = {"Cluster": GREEN + BOLD, "Unassigned": YELLOW, "Suboptimal": RED}[label]
+			color = {"Cluster": GREEN + BOLD, "Orphan": YELLOW, "Pending": RED, "Suboptimal": RED}[label]
 			logger.info("[%s] " + color + "%s" + END_FORMATTING + DIM + "  (%s)" + END_FORMATTING, sample, entry["summary"], cov_text(entry["qc"]))
 		if new_any:
 			write_reports(args, state)
 			last_new = time.time()
 		if time.time() - last_new > args.idle_timeout:
 			logger.info("No new files in %d s: end of pipeline", args.idle_timeout)
+			finalize(args, state, state_file)
 			break
 		time.sleep(args.poll)
  
