@@ -324,7 +324,7 @@ Below the cards, **Evolution during the run** is a table showing how the result 
 
 The header states **"Orphan"**. Below the sequencing quality card, a **Cluster verification** card says _"Complete"_ and that all clusters have enough covered markers: the sample is truly not part of any preexisting cluster, and the result is not due to a lack of data.
 
-![Individual report of an orphan sample](docs/images/report_unassigned_example.png)
+![Individual report of an orphan sample](docs/images/report_unassigned_example_orphan.png)
 
 ### 10.4 Individual report of a pending sample
 
@@ -339,7 +339,7 @@ The clusters closest to being completed are listed first. This tells you, for ea
 
 At the end of the run, the samples that are still pending are labelled **Suboptimal**: the data were not enough to rule out every cluster, and you may want to sequence them again.
 
-![Individual report of an pending sample](docs/images/report_unassigned_example_opt.png)
+![Individual report of an pending sample](docs/images/report_unassigned_example.png)
 
 ![Individual report of an suboptimal sample](docs/images/report_unassigned_example_subopt.png)
 
